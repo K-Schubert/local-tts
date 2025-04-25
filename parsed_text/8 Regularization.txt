@@ -1,0 +1,51 @@
+Chapter 8 discusses regularization techniques used in RLHF to prevent reward model over-optimization, which can lead to undesirable outputs like nonsensical text or factual errors. The most common method is penalizing the KL divergence between the trained policy and a reference policy, ensuring the model doesn't stray too far from a desired style or behavior. An approximation for calculating KL divergence using log probabilities and a code example are provided. Another technique involves incorporating pretraining gradients, either by adding a pretraining objective term (as in InstructGPT) or using a Negative Log Likelihood loss alongside DPO (DPO+NLL), to maintain performance on original training data. Finally, other regularization methods are mentioned, particularly for reward models, such as the margin loss used in Llama 2, which enforces a minimum difference in reward scores based on human rating margins, and similar concepts in RPO and REBEL within direct alignment methods.8 Regularization
+Throughout the RLHF optimization, many regularization steps are used to prevent over-optimization of the reward model. Over-optimization in these contexts looks like models that output nonsensical text. Some examples of optimization "off the rails" are that models can output followable math reasoning with extremely incorrect answers, repeated text, switching languages, or excessive special characters.
+The most popular variant, used in most RLHF implementations at the time of writing, is a KL Distance from the current policy to a reference policy across the generated samples. Many other regularization techniques have emerged in the literature to then disappear in the next model iteration in that line of research. That is to say that regularization outside the core KL distance from generations is often used to stabilize experimental setups that can then be simplified in the next generations. Still, it is important to understand tools to constrain optimization in RLHF.
+The general formulation, when used in an RLHF framework with a reward model, rθ is as follows:
+A formula showing the regularized reward r is equal to the original reward r_theta minus a scaling factor lambda times the regularization term r_reg.
+With the reference implementation being:
+A formula specifying the regularized reward r equals the original reward r_theta minus a KL divergence term, scaled by lambda_KL. The KL divergence measures the difference between the RL policy's probability distribution for output y given input x and the reference policy's distribution for the same.
+8.1 KL Distances in RL Optimization
+For mathematical definitions, see Chapter 5 on Problem Setup. Recall that KL distance is defined as follows:
+A formula defining the Kullback-Leibler (KL) divergence between two probability distributions P and Q over a set X. It's calculated as the sum over all x in X of P(x) times the logarithm of the ratio P(x) divided by Q(x).
+In RLHF, the two distributions of interest are often the distribution of the new model version, say P(x), and a distribution of the reference policy, say Q(x).
+8.1.1 Reference Model to Generations
+The most common implementation of KL penalities are by comparing the distance between the generated tokens during training to a static reference model. The intuition is that the model you're training from has a style that you would like to stay close to. This reference model is most often the instruction tuned model, but can also be a previous RL checkpoint. With simple substitution, the model we are sampling from becomes P_RL(x) and P_Ref(x), shown above in the KL divergence formula within the reference implementation. Such KL distance was first applied to dialogue agents well before the popularity of large language models (source: Sequence tutor: Conservative fine-tuning of sequence generation models with kl-control from 2017), yet KL control was quickly established as a core technique for fine-tuning pretrained models (source: Human-centric dialog training via offline reinforcement learning from 2020).
+8.1.2 Implementation Example
+In practice, the implementation of KL distance is often approximated (source: Approximating KL-divergence from 2016), making the implementation far simpler. With the above definition, the summation of KL can be converted to an expectation when sampling directly from the distribution P(X). In this case, the distribution P(X) is the generative distribution of the model currently being trained (i.e. not the reference model). Then, the computation for KL distance changes to the following:
+A formula showing the KL divergence between P and Q approximated as the expected value (when sampling x according to P) of the difference between the log probability of x under P and the log probability of x under Q.
+This mode is far simpler to implement, particularly when dealing directly with log probabilities used frequently in language model training.
+```python
+import torch.nn.functional as F
+# Step 1: Generate tokens using the trained model's policy
+generated_tokens = model.generate(inputs)
+
+# Step 2: Get logits for both models using the generated tokens as context
+logits = model.forward(inputs) # technically redundant
+ref_logits = ref_model.forward(inputs)
+# Convert logits to log probabilities (e.g., softmax then log)
+logprobs = convert_to_logpbs(logits) # softmax and normalize
+ref_logprobs = convert_to_logpbs(ref_logits)
+
+# Calculate KL divergence approximation
+kl_approx = logprob - ref_logprob
+# Calculate full KL divergence using PyTorch function (requires log probabilities)
+kl_full = F.kl_div(ref_logprob, logprob) # alternate computation
+```
+This Python code snippet shows how to approximate KL divergence. First, generate tokens using the trained model. Second, get the log probabilities of these generated tokens under both the trained model and the reference model. The KL approximation is the difference between these log probabilities. An alternative uses `torch.nn.functional.kl_div`.
+Some example implementations include TRL and Hamish Ivison's Jax Code
+8.2 Pretraining Gradients
+Another way of viewing regularization is that you may have a dataset that you want the model to remain close to, as done in InstructGPT (source: Training language models to follow instructions with human feedback from 2022) 'in order to fix the performance regressions on public NLP datasets'. To implement this, they modify the training objective for RLHF. Taking the general regularized reward formula, we can transform this into an objective function to optimize by sampling from the RL policy model, completions y from prompts x, which yields:
+A formula defining the training objective as the expected value (over data sampled from the RL policy distribution D_RL) of the regularized reward, which is the original reward r_theta minus lambda times the regularization term r_reg.
+Then, we can add an additional reward for higher probabilities on pretraining accuracy:
+A formula extending the previous objective function. It adds a second term: gamma multiplied by the expected value (over data sampled from a pretraining distribution D_pretrain) of the log probability of the input x under the RL policy pi_RL. This encourages the model to maintain performance on the pretraining data.
+Recent work proposed using a negative log likelihood term to balance the optimization of Direct Preference Optimization (DPO) (source: Disentangling length from quality in direct preference optimization from 2024). Given the pairwise nature of the DPO loss, the same loss modification can be made to reward model training, constraining the model to predict accurate text (rumors from laboratories that did not publish the work).
+The optimization follows as a modification to DPO.
+A formula showing a combined loss L_DPO+NLL, which is the sum of the standard DPO loss (calculated on preference pairs c^w, y_w, c^l, y_l given input x_i) and a negative log-likelihood loss L_NLL (calculated on chosen completions c^w, y_w given input x_i), scaled by a coefficient alpha. This aims to blend preference learning with standard language modeling objectives on good examples.
+This formula appears related to the DPO+NLL loss, likely part of its detailed derivation. It involves log probabilities of chosen (yw) and rejected (yl) completions under the policy model (Mθ) and potentially a reference model (Mr), given context xi. It includes terms weighted by beta (comparing log probability ratios) and an alpha term possibly related to length penalty or NLL contribution.
+8.3 Other Regularization
+Controlling the optimization is less well defined in other parts of the RLHF stack. Most reward models have no regularization beyond the standard contrastive loss function. Direct Alignment Algorithms handle regularization to KL distances differently, through the β parameter (see the chapter on Direct Alignment).
+Llama 2 proposed a margin loss for reward model training (source: Llama 2: Open foundation and fine-tuned chat models from 2023):
+A formula for a margin loss L(theta). It is the negative log of the sigmoid function applied to the difference between the reward model's score for the winning response (r_theta(x, y_w)) and the losing response (r_theta(x, y_l)), minus a margin m(r). This encourages the score difference to exceed the margin.
+Where m(r) is the numerical difference in delta between the ratings of two annotators. This is either achieved by having annotators rate the outputs on a numerical scale or by using a quantified ranking method, such as Likert scales.
+Reward margins have been used heavily in the direct alignment literature, such as Reward weighted DPO, ‘'Reward-aware Preference Optimization'' (RPO), which integrates reward model scores into the update rule following a DPO loss (source: Iterative reasoning preference optimization from 2024), or REBEL (source: Rebel: Reinforcement learning via regressing relative rewards from 2024) that has a reward delta weighting in a regression-loss formulation.

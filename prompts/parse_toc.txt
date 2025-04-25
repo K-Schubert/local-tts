@@ -1,0 +1,19 @@
+<context>
+	Extracting and parsing PDFs to text to input into a text-to-speech AI model.
+<context>
+
+<goal>
+	Review the attached PDF documents and extract clear page numbers for each section/chapters from the table of contents. The goal is to have page numbers (start, end) associated to chapters/sections to be able to parse them in a next step in a contextually meaningful way.
+</goal>
+
+<instructions>
+	<instruction>if the table of contents is present in the attached PDF document, extract chapters with start and end pages, else return "NO TABLE OF CONTENTS"</instruction>
+	<instruction>only extract highest-level chapters/sections, not subsections (eg. 1.1, 2.3.2, etc.).</instruction>
+	<instruction>don't forget the bibliography, it's extremely important.</instruction>
+    <instruction>if the end page of the bibliography is not specified, set end page as "NA"</instruction>
+</instructions>
+
+<response_format>
+    class TableOfContents(BaseModel):
+        sections: str # str representation of a dict where key is the chapter number/name, value is a tuple with (start, end) pages
+</response_format>

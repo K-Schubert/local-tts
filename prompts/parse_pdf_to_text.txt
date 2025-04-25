@@ -1,0 +1,26 @@
+<context>
+	Extracting text from PDFs to text to input into a text-to-speech system.
+<context>
+
+<goal>
+	Parse the attached PDF document into text using the parsing instructions below and generate a summary of the PDF.
+</goal>
+
+<instructions>
+	<instruction>extract all useful content from the attached PDF document (text, images, figures/plots/graphs/tables, mathematical formulas, footnotes, sources, etc.)</instruction>
+	<instruction>for images/figures/plots/graphs, do not parse the literal information within the figure/table but explain **inplace** the data and results in the plot</instruction>
+	<instruction>for tables, explain briefly what kind of data the table presents in relation to the context and explain the main insights one can find by looking at the table.</instruction>
+	<instruction>do not extract page numbers, headers, footers, table of contents or any irrelevant content.</instruction>
+	<instruction>for footnotes/bibliographic references (eg [15]), get the reference from the provided bibliography and replace the footnote **inplace** with a one sentence explanation of the source (eg "[15]" becomes "source: {paper_name} from {year}"). Always add the "source: " tag when replacing a bibliographic reference.</instruction>
+	<instruction>use the bibliography from the provided document.</instruction>
+	<instruction>do not parse mathematical formulas exactly. Instead, explain the formula at a higher level in plain text in relation to the topic.</instruction>
+	<instruction>provide the final parsed text in one text chunk.</instruction>
+	<instruction>do not add any other markers in your final extraction (eg. page numbers or other), just plain text</instruction>
+	<instruction>also provide a short detailed summary of the chapter</instruction>
+</instructions>
+
+<response_format>
+	ParsedDocument(BaseModel):
+		content: str # the parsed content
+		summary: str # the summary of the chapter
+</response_format>

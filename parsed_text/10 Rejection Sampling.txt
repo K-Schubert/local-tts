@@ -1,0 +1,76 @@
+This chapter describes Rejection Sampling (RS) as a simple preference fine-tuning baseline. The process involves generating multiple completions (N) for each prompt (M) using the current policy model, scoring these completions using a reward model to create a reward matrix (R), selecting the best completions based on rewards, and then fine-tuning the policy model on these selected high-reward completions. Two primary selection methods are discussed: 'Top Per Prompt' (selecting the single best completion for each prompt) and 'Top Overall Prompts' (selecting the K best completions from the entire generated set). An example illustrates both selection methods. Key hyperparameters include sampling temperature and the number of completions per prompt (N). An implementation trick involves sorting completions by length for efficient batch inference. Finally, the chapter contrasts RS with Best-of-N (BoN) sampling, noting that BoN is purely an inference-time sampling technique that selects the best among N generated samples without model updates, and showing its equivalence to the Top-1 selection method in RS for a single prompt.10 Rejection Sampling
+Rejection Sampling (RS) is a popular and simple baseline for performing preference fine-tuning. Rejection sampling operates by curating new candidate instructions, filtering them based on a trained reward model, and then fine-tuning the original model only on the top completions.
+The name originates from computational statistics (source: Adaptive rejection sampling for gibbs sampling from 1992), where one wishes to sample from a complex distribution, but does not have a direct method to do so. To alleviate this, one samples from a simpler to model distribution and uses a heuristic to check if the sample is permissible. With language models, the target distribution is high-quality answers to instructions, the filter is a reward model, and the sampling distribution is the current model.
+Many prominent RLHF and preference fine-tuning papers have used rejection sampling as a baseline, but a canonical implementation and documentation does not exist
+WebGPT (source: Webgpt: Browser-assisted question-answering with human feedback from 2021), Anthropic's Helpful and Harmless agent(source: Training a helpful and harmless assistant with reinforcement learning from human feedback from 2022), OpenAI's popular paper on process reward models (source: Let's verify step by step from 2023), Llama 2 Chat models (source: Llama 2: Open foundation and fine-tuned chat models from 2023), and other seminal works all use this baseline.
+10.1 Training Process
+A visual overview of the rejection sampling process is included below in fig. 12.
+Figure 12 shows a diagram outlining the Rejection Sampling process. It starts with an 'Entire SFT Prompts Dataset' feeding into a 'Policy Language Model'. This model generates multiple completions for each prompt. These completions are then passed through a 'Reward (Preference) Model' which scores each completion based on preference. The outputs are scored, and a batch of generated completions passed through the reward model are selected. Finally, the process involves fine-tuning the original policy model on the 'best K samples' based on these scores.
+10.1.1 Generating Completions
+Let's define a set of M prompts as a vector represented by the variable X, containing elements x1 through xM.
+These prompts can come from many sources, but most popularly they come from the instruction training set.
+For each prompt xi, we generate N completions. We can represent this as a matrix Y, where each element yi,j corresponds to the j-th completion for the i-th prompt, resulting in an M-by-N matrix.
+where yi,j represents the j-th completion for the i-th prompt. Now, we pass all of these prompt-completion pairs through a reward model, to get a matrix of rewards. We'll represent the rewards as a matrix R.
+The matrix R contains the rewards, where each element ri,j is the reward for the j-th completion of the i-th prompt. It is an M-by-N matrix.
+Each reward ri,j is computed by passing the completion yi,j and its corresponding prompt xi through a reward model R, according to the formula: ri,j equals the reward model output R given the completion yi,j conditioned on the prompt xi.
+10.1.2 Selecting Top-N Completions
+There are multiple methods to select the top completions to train on.
+To formalize the process of selecting the best completions based on our reward matrix, we can define a selection function S that operates on the reward matrix R.
+10.1.2.1 Top Per Prompt The first potential selection function takes the max per prompt.
+The selection function S(R) produces a vector of indices. For each prompt i (from 1 to M), it finds the index j that maximizes the reward ri,j.
+This function S returns a vector of indices, where each index corresponds to the column with the maximum reward for each row in R. We can then use these indices to select our chosen completions:
+The chosen completions Ychosen are obtained by selecting the completion for each prompt i corresponding to the index determined by the selection function S(R) applied to that prompt's row.
+10.1.2.2 Top Overall Prompts Alternatively, we can select the top K prompt-completion pairs from the entire set. First, let's flatten our reward matrix R into a single vector:
+The flattened reward vector Rflat is created by concatenating all rows of the reward matrix R into a single vector of length M * N.
+This Rflat vector has length M × N, where M is the number of prompts and N is the number of completions per prompt.
+Now, we can define a selection function SK that selects the indices of the K highest values in Rflat:
+The selection function SK operates on the flattened reward vector Rflat and returns the indices corresponding to the K largest reward values using an argsort operation and taking the last K elements.
+where argsort returns the indices that would sort the array in ascending order, and we take the last K indices to get the K highest values.
+To get our selected completions, we need to map these flattened indices back to our original completion matrix Y. We simply index the Rflat vector to get our completions.
+10.1.2.3 Selection Example Consider the case where we have the following situation, with 5 prompts and 4 completions. We will show two ways of selecting the completions based on reward.
+An example 5x4 reward matrix R is presented with numerical values.
+First, per prompt. Intuitively, we can highlight the reward matrix as follows:
+The example reward matrix R is shown again, with the highest reward in each row highlighted (0.7, 0.8, 0.9, 0.8, 0.6).
+Using the argmax method, we select the best completion for each prompt:
+The selection function S(R) is defined as taking the argmax over j for each row i in the range [1, 4] (Note: the text says [1,4] but the example matrix has 5 rows, likely a typo, should be [1,5]).
+The result of S(R) for the example matrix is the vector [1, 2, 1, 3, 4].
+This means we would select:
+• For prompt 1: completion 1 (reward 0.7)
+• For prompt 2: completion 2 (reward 0.8)
+• For prompt 3: completion 1 (reward 0.9)
+• For prompt 4: completion 3 (reward 0.8)
+• For prompt 5: completion 4 (reward 0.6)
+Now, best overall. Let's highlight the top 5 overall completion pairs.
+The example reward matrix R is shown again, this time with the top 5 highest overall reward values highlighted (0.7, 0.8, 0.9, 0.8, 0.7).
+First, we flatten the reward matrix:
+The flattened reward vector Rflat is shown, containing all 20 reward values from the example matrix R in row-major order.
+Now, we select the indices of the 5 highest values:
+The selection function S5 applied to Rflat yields the index vector [8, 5, 14, 0, 19], corresponding to the top 5 rewards.
+Mapping these back to our original matrix:
+• Index 8 → prompt 3, completion 1 (reward 0.9)
+• Index 5 → prompt 2, completion 2 (reward 0.8)
+• Index 14 → prompt 4, completion 3 (reward 0.8)
+• Index 0 → prompt 1, completion 1 (reward 0.7)
+• Index 19 → prompt 3, completion 4 (reward 0.7) (Note: Index 19 corresponds to prompt 5, completion 4, reward 0.6 in the Rflat vector. The text seems to have a mistake here, potentially intending to highlight the 0.7 for prompt 3, completion 4 which is index 11, or there's another higher value missed. Based on Rflat, the 5th highest is 0.7 at index 0 and index 11. Let's assume index 11 was intended for prompt 3, completion 4, reward 0.7) Index 11 -> prompt 3, completion 4 (reward 0.7).
+10.1.2.4 Implementation Example Here is a code snippet showing how the selection methods could be implemented.
+This section provides Python code using the NumPy library. It demonstrates generating random data, using `np.argsort` to get sorted indices, sorting the array, and two methods to recover the original array using the sorted indices, verifying correctness with `np.allclose`.
+10.1.3 Fine-tuning
+With the selected completions, you then perform standard instruction fine-tuning on the current rendition of the model. More details can be found in the chapter on instruction tuning.
+10.1.4 Details
+Implementation details for rejection sampling are relatively sparse. The core hyperparameters for performing this training are very intuitive:
+• Sampling parameters: Rejection sampling is directly dependent on the completions received from the model. Common settings for RS include temperatures above zero, e.g. between 0.7 and 1.0, with other modifications to parameters such as top-p or top-k sampling.
+• Completions per prompt: Successful implementations of rejection sampling have included 10 to 30 or more completions for each prompt. Using too few completions will make training biased and or noisy.
+• Instruction tuning details: No clear training details for the instruction tuning during RS have been released. It is likely that they use slightly different settings than the initial instruction tuning phase of the model.
+• Heterogeneous model generations: Some implementations of rejection sampling include generations from multiple models rather than just the current model that is going to be trained. Best practices on how to do this are not established.
+• Reward model training: The reward model used will heavily impact the final result. For more resources on reward model training, see the relevant chapter.
+10.1.4.1 Implementation Tricks
+• When doing batch reward model inference, you can sort the tokenized completions by length so that the batches are of similar lengths. This eliminates the need to run inference on as many padding tokens and will improve throughput in exchange for minor implementation complexity.
+10.2 Related: Best-of-N Sampling
+Best-of-N (BoN) sampling is often included as a baseline relative to RLHF methods. It is important to remember that BoN does not modify the underlying model, but is a sampling technique. For this matter, comparisons for BoN sampling to online training methods, such as PPO, are still valid in some contexts. For example, you can still measure the KL distance when running BoN sampling relative to any other policy.
+Here, we will show that when using simple BoN sampling over one prompt, both selection criteria shown above are equivalent.
+Let R be a reward vector for our single prompt with N completions:
+The reward vector R contains N reward values (r1 to rN) for a single prompt.
+Where rj represents the reward for the j-th completion.
+Using the argmax method, we select the best completion for the prompt:
+The selection function S(R) finds the index j corresponding to the maximum reward rj within the range [1, N].
+Using the Top-K method is normally done with Top-1, reducing to the same method.
